@@ -126,7 +126,7 @@ def create_images_from_single_folder(data_path, output_path,
     # Progressbar
     bar = progressbar.ProgressBar(max_value=len(original_filenames))
     bar.start()
-    exit_next = False
+    break_next = False
     # with open('./dataset/conversion_dict.json', 'r') as f:
     #     video_file_info = json.load(f)
     # import ipdb; ipdb.set_trace()
@@ -180,7 +180,10 @@ def create_images_from_single_folder(data_path, output_path,
                 b_boxes = face_detectore(original_image, 0)
                 if len(b_boxes) == 1:
                     output_original_dir = original_filename.split('.')[0]
-                    os.makedirs(join(original_images_output_path, output_original_dir), exist_ok=True)
+                    try:
+                        os.makedirs(join(original_images_output_path, output_original_dir), exist_ok=False)
+                    except OSError as e:  # if dir exists then don't process this video again.
+                        break
                     tracker = dlib.correlation_tracker()
                     tracker.start_track(original_image, b_boxes[0].rect)
                     b_box = b_boxes[0].rect
@@ -210,8 +213,10 @@ def create_images_from_single_folder(data_path, output_path,
                         print(f'multiple faces in frame {frame_number} of video {original_filenames[i]}')
                         print(e)
                         break
-
-
+                    except TypeError as e:
+                        print(f'no face in frame {frame_number} of video {original_filenames[i]}')
+                        print(e)
+                        break_next = True
 
 
                 # Write to files
@@ -227,8 +232,8 @@ def create_images_from_single_folder(data_path, output_path,
 
                 image_counter += 1
                 image_frames.pop(0)
-                if exit_next:
-                    exit(1)
+                if break_next:
+                    break
 
                 if len(image_frames) == 0:
                     break
