@@ -39,10 +39,13 @@ import os
 from os.path import join
 import argparse
 import random
+
+import face_alignment.detection
 import progressbar      # pip install progressbar2
 import numpy as np
 from align_and_crop_faces_like_FFHQ import CropLikeFFHQ
-import json
+# import json
+import dlib
 
 def get_non_zero_bb(img):
     # Get non zero elements for mask to get mask area
@@ -50,6 +53,20 @@ def get_non_zero_bb(img):
     bbox = np.min(a[0]), np.max(a[0]), np.min(a[1]), np.max(a[1])
     return bbox
 
+
+def enlarge_centred(b_box, factor, org_img_size):
+    cntr_x = (b_box.left() + b_box.right()) / 2
+    cntr_y = (b_box.top() + b_box.bottom()) / 2
+
+    half_width = (b_box.right() - b_box.left()) / 2 * factor
+    half_height = (b_box.bottom() - b_box.top()) / 2 * factor
+
+    left = max(int(cntr_x - half_width), 0)
+    top = max(int(cntr_y - half_height), 0)
+    right = min(int(cntr_x + half_width), org_img_size[1])
+    bottom = min(int(cntr_y + half_height), org_img_size[0])
+
+    return left, top, right, bottom
 
 def create_images_from_single_folder(data_path, output_path,
                                      absolute_num,
@@ -109,14 +126,15 @@ def create_images_from_single_folder(data_path, output_path,
     # Progressbar
     bar = progressbar.ProgressBar(max_value=len(original_filenames))
     bar.start()
-    exit_next = False
-    with open('./dataset/conversion_dict.json', 'r') as f:
-        video_file_info = json.load(f)
+    break_next = False
+    # with open('./dataset/conversion_dict.json', 'r') as f:
+    #     video_file_info = json.load(f)
     # import ipdb; ipdb.set_trace()
+    face_detectore = dlib.cnn_face_detection_model_v1('./resources/mmod_human_face_detector.dat')
     for i in range(len(original_filenames)):
         # Get readers
         original_filename = original_filenames[i]
-        youtube_video_id = video_file_info[original_filename[:-4]][:-2]
+        # youtube_video_id = video_file_info[original_filename[:-4]][:-2]
         original_reader = cv2.VideoCapture(join(original_data_path,
                                                 original_filename))
         # Get number of frames
@@ -145,58 +163,60 @@ def create_images_from_single_folder(data_path, output_path,
         image_counter = 0
         # output_filename_prefix = original_filename.split('.')[0] + '_'
 
-        json_root = os.path.join('faceforensics_original_video_information/Face2Face_video_information',
-                                 youtube_video_id, 'faces')
-        if not os.path.exists(json_root):
-            continue
+        # json_root = os.path.join('faceforensics_original_video_information/Face2Face_video_information',
+        #                          youtube_video_id, 'faces')
+        # if not os.path.exists(json_root):
+        #     continue
 
-        output_original_dir = original_filename.split('.')[0]
-        os.makedirs(join(original_images_output_path, output_original_dir), exist_ok=True)
-
-        files = os.listdir(json_root)
+        frame_number = 0
         # import ipdb; ipdb.set_trace()
-        json_files_cpunt = 0
-        for file in files:
-            json_files_cpunt += 1
-        if json_files_cpunt > 1:
-            raise ValueError('More than one JSON file. Dont know what to do')
 
-        with open(os.path.join(json_root, file), 'r') as f:
-            info_this_vid = json.load(f)
-        bounding_boxes = np.array(info_this_vid['faces'])
-        original_reader.set(cv2.CAP_PROP_POS_FRAMES, info_this_vid['first frame'] - 1)
-        frame_number = info_this_vid['first frame'] - 1
-
-        while original_reader.isOpened() or frame_number >= info_this_vid['last frame']:
+        while original_reader.isOpened():
             # _, image = altered_reader.read()
             _, original_image = original_reader.read()
             if original_image is None:
                 break
+            if image_counter == 0:
+                b_boxes = face_detectore(original_image, 0)
+                if len(b_boxes) == 1:
+                    output_original_dir = original_filename.split('.')[0]
+                    try:
+                        os.makedirs(join(original_images_output_path, output_original_dir), exist_ok=False)
+                    except OSError as e:  # if dir exists then don't process this video again.
+                        break
+                    tracker = dlib.correlation_tracker()
+                    tracker.start_track(original_image, b_boxes[0].rect)
+                    b_box = b_boxes[0].rect
+                else:
+                    break
+            else:
+                tracker.update(original_image)
+                b_box = tracker.get_position()
+
             if frame_number == image_frames[0]:
                 if crop:
                     # Original image
                     # Primary crop
-                    # import ipdb; ipdb.set_trace()
-                    # change this to crop
+
+                    b_box_large = enlarge_centred(b_box, factor=2.5, org_img_size=original_image.shape)
+
                     # original_image = \
-                    #     cv2.rectangle(original_image, tuple(bounding_boxes[image_counter][:2]),
-                    #                   tuple(bounding_boxes[image_counter][:2] + bounding_boxes[image_counter][2:]),
+                    #     cv2.rectangle(original_image, tuple([b_box_large[0], b_box_large[1]]),
+                    #                   tuple([b_box_large[2], b_box_large[3]]),
                     #                   (255, 0, 0), 3)
-                    cntr = bounding_boxes[image_counter][:2] + bounding_boxes[image_counter][2:]//2
-                    inflate_hw = bounding_boxes[image_counter][-1] * 3
-                    top_left = np.clip((cntr - inflate_hw/2).astype(int), 0, 99999)
-                    right_bot = (cntr + inflate_hw / 2).astype(int)
-                    # import ipdb; ipdb.set_trace()
-                    original_image = original_image[top_left[1]:min(right_bot[1], original_image.shape[0]),
-                                     top_left[0]:min(right_bot[0], original_image.shape[1]), :]
+
+                    original_image = original_image[b_box_large[1]:b_box_large[3], b_box_large[0]:b_box_large[2], :]
 
                     try:
                         original_image, _ = ffhq_style_cropper.align(original_image, output_size=output_img_res)
                     except ValueError as e:
                         print(f'multiple faces in frame {frame_number} of video {original_filenames[i]}')
                         print(e)
-                        exit_next = True
-
+                        break
+                    except TypeError as e:
+                        print(f'no face in frame {frame_number} of video {original_filenames[i]}')
+                        print(e)
+                        break_next = True
 
 
                 # Write to files
@@ -212,8 +232,8 @@ def create_images_from_single_folder(data_path, output_path,
 
                 image_counter += 1
                 image_frames.pop(0)
-                if exit_next:
-                    exit(1)
+                if break_next:
+                    break
 
                 if len(image_frames) == 0:
                     break
