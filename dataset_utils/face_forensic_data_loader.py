@@ -8,10 +8,19 @@ from PIL import Image
 from io import BytesIO
 import torch
 
+_RANDOM_GIF = 'Random_GIF'
+_NONE = None
+OFFSET_MODES = {_RANDOM_GIF, _NONE}
+
+
+_FLAME_IMG = 'flame_img'
+_FLAME_IMG_WBG = 'flame_img_wbg'
+FLAME_TYPES = {_FLAME_IMG, _FLAME_IMG_WBG}
+
 
 class FaceForensicsLMDBDataset(Dataset):
 
-    def __init__(self, lmdb_path, offset_mode=None, transforms=None, flame_type='flame_img'):  # flame_img_wbg
+    def __init__(self, lmdb_path, offset_mode=None, transforms=None, flame_type=_FLAME_IMG):  # flame_img_wbg
         self.lmdb_path = lmdb_path
         # Delay loading LMDB data until after initialization to avoid "can't pickle Environment Object error"
         self.env = None
@@ -20,8 +29,15 @@ class FaceForensicsLMDBDataset(Dataset):
         self.offset_mode = offset_mode
         self.transforms = transforms
         self.flame_type = flame_type
-        if self.offset_mode == 'Random':
+        self.skip_0th_flame_data = False
+
+        if flame_type not in FLAME_TYPES:
+            raise NotImplementedError(f'Data Loader not implemented for flame type: {flame_type}')
+        if self.offset_mode not in OFFSET_MODES:
+            raise NotImplementedError(f'Data Loader not implemented for offset mode: {offset_mode}')
+        elif self.offset_mode == _RANDOM_GIF:
             self.offset = -1
+            self.skip_0th_flame_data = True
         # Add if-else-if conditions here
 
     def _init_db(self):
@@ -37,7 +53,7 @@ class FaceForensicsLMDBDataset(Dataset):
 
     def read_lmdb_img(self, key):
         lmdb_data = self.txn.get(key.encode('utf-8'))
-        lmdb_data = Image.open(BytesIO(lmdb_data)) # .convert('RGB')  # TODO check this convert func
+        lmdb_data = Image.open(BytesIO(lmdb_data))
         if self.transforms is not None:
             lmdb_data = self.transforms(lmdb_data)
         return lmdb_data
@@ -47,17 +63,21 @@ class FaceForensicsLMDBDataset(Dataset):
             self._init_db()
         length = int(self.txn.get('length'.encode('utf-8')).decode('utf-8'))
         self.length = length
+        # print(length)
         return length
 
     def _get_data(self, index, offset):
         org_image_key = f'{index:03d}-{offset:04d}-org_img'
-        flame_image_key = f'{index:03d}-{offset:04d}-{self.flame_type}'
 
         # image_2d_keypt_key = f'{index:03d}-{offset:04d}-2d'
         # image_3d_keypt_key = f'{index:03d}-{offset:04d}-3d'
 
         org_img_data = self.read_lmdb_img(org_image_key)
-        flame_img_data = self.read_lmdb_img(flame_image_key)
+        if self.skip_0th_flame_data and offset == 0:
+            flame_img_data = None
+        else:
+            flame_image_key = f'{index:03d}-{offset:04d}-{self.flame_type}'
+            flame_img_data = self.read_lmdb_img(flame_image_key)
 
         # img_2d_key_pt = self.read_lmdb_np(image_2d_keypt_key)
         # img_3d_key_pt = self.read_lmdb_np(image_3d_keypt_key)
@@ -105,7 +125,7 @@ if __name__ == '__main__':
     img_transforms = transforms.Compose([transforms.ToTensor()])
     face_forensics_data_loader = \
         DataLoader(dataset=FaceForensicsLMDBDataset(lmdb_path='/home/pravir/Downloads/deca.lmdb',
-                                                    offset_mode='Random', transforms=img_transforms),
+                                                    offset_mode='Random_GIF', transforms=img_transforms),
                    batch_size=1,
                    shuffle=True)
     data = next(iter(face_forensics_data_loader))

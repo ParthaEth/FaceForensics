@@ -76,7 +76,8 @@ def prepare(transaction, flame_dataset_folder, original_images_path):
             # print(two_dim_key, two_dim_path)
             # print(three_dim_key, three_dim_path)
 
-    total += 1
+        total += 1
+    print(f'total length = {total}')
     transaction.put('length'.encode('utf-8'), str(total).encode('utf-8'))
 
 
